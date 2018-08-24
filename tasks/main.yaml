@@ -1,0 +1,277 @@
+---
+
+- name: Check cluster membership
+  shell: docker info --format '{% raw %}{{ .Swarm.LocalNodeState }}{% endraw %}'
+  changed_when: false
+  register: docker_swarm__check_membership_result
+  tags:
+    - docker_swarm_init
+    - docker_swarm_join
+    - docker_swarm_labels
+    - docker_swarm_xmote
+    - docker_swarm_promote
+    - docker_swarm_demote
+
+- set_fact:
+    docker_swarm__nodes_membership_active: "{{ hostvars | swarm_nodes_membership }}"
+    docker_swarm__nodes_membership_inactive: "{{ hostvars | swarm_nodes_membership('inactive') }}"
+  tags:
+    - docker_swarm_init
+    - docker_swarm_join
+    - docker_swarm_labels
+    - docker_swarm_xmote
+    - docker_swarm_promote
+    - docker_swarm_demote
+
+- name: Initiate the cluster
+  shell: docker swarm init --advertise-addr {{ docker_swarm_nodes | swarm_node_iface(inventory_hostname, docker_swarm_node_iface) }}
+  when: >
+    docker_swarm__nodes_membership_active | length == 0 and
+    inventory_hostname == groups[docker_swarm_group_managers][0]
+  tags:
+    - docker_swarm_init
+    - docker_swarm_join
+
+- name: Check which nodes are managers
+  shell: docker info --format '{% raw %}{{ .Swarm.ControlAvailable }}{% endraw %}'
+  changed_when: false
+  register: docker_swarm__check_manager_result
+  tags:
+    - docker_swarm_init
+    - docker_swarm_join
+    - docker_swarm_labels
+    - docker_swarm_xmote
+    - docker_swarm_promote
+    - docker_swarm_demote
+
+- set_fact:
+    docker_swarm__nodes_managership: "{{ hostvars | swarm_nodes_managership }}"
+    docker_swarm__run_manager: "{{ (hostvars | swarm_nodes_managership)[0] }}"
+  tags:
+    - docker_swarm_init
+    - docker_swarm_join
+    - docker_swarm_labels
+    - docker_swarm_xmote
+    - docker_swarm_promote
+    - docker_swarm_demote
+
+- name: Get manager token
+  shell: docker swarm join-token -q manager
+  register: docker_swarm__token_manager_result
+  changed_when: false
+  when: >
+    inventory_hostname == docker_swarm__run_manager
+  tags:
+    - docker_swarm_join
+
+- name: Get worker token
+  shell: docker swarm join-token -q worker
+  register: docker_swarm__token_worker_result
+  when: >
+    inventory_hostname == docker_swarm__run_manager
+  changed_when: false
+  tags:
+    - docker_swarm_join
+
+- name: Get current list of nodes
+  shell: docker node ls --format '{% raw %}{{ .Hostname }}{% endraw %}'
+  register: docker_swarm__check_current_nodes_result
+  when: >
+    inventory_hostname == docker_swarm__run_manager
+  changed_when: false
+  tags:
+    - docker_swarm_join
+    - docker_swarm_cleanup
+
+- set_fact:
+    docker_swarm__current_nodes: "{{ hostvars[docker_swarm__run_manager].docker_swarm__check_current_nodes_result.stdout_lines }}"
+  tags:
+    - docker_swarm_join
+    - docker_swarm_cleanup
+
+- set_fact:
+    docker_swarm__token_manager: "{{
+      hostvars | swarm_node_get_field_value(
+          docker_swarm__run_manager,
+          'docker_swarm__token_manager_result'
+      ) }}"
+    docker_swarm__token_worker: "{{
+      hostvars | swarm_node_get_field_value(
+          docker_swarm__run_manager,
+          'docker_swarm__token_worker_result'
+      ) }}"
+    docker_swarm__absent_nodes: "{{ hostvars | swarm_nodes_remove(docker_swarm__run_manager, docker_swarm_nodes) }}"
+  tags:
+    - docker_swarm_join
+
+- name: Demote manager nodes if they are inactive and about to be added
+  shell: docker node demote {{ item }}
+  when: >
+    docker_swarm__nodes_membership_active | length > 1 and
+    inventory_hostname == docker_swarm__run_manager
+  loop: >
+    {{
+        docker_swarm__nodes_membership_inactive |
+        intersect(docker_swarm__current_nodes) |
+        intersect(groups[docker_swarm_group_managers])
+    }}
+  tags:
+    - docker_swarm_join
+    - docker_swarm_cleanup
+
+- name: Remove nodes if they are inactive and about to be added
+  shell: docker node rm --force {{ item }}
+  when: >
+    docker_swarm__nodes_membership_active | length > 1 and
+    inventory_hostname == docker_swarm__run_manager
+  loop: >
+    {{
+        docker_swarm__nodes_membership_inactive |
+        intersect(docker_swarm__current_nodes)
+    }}
+  tags:
+    - docker_swarm_join
+    - docker_swarm_cleanup
+
+- name: Add new manager
+  shell: >
+    docker swarm join --token {{ docker_swarm__token_manager }}
+    --advertise-addr {{ docker_swarm_nodes | swarm_node_iface(inventory_hostname, docker_swarm_node_iface) }}
+    --availability {{ docker_swarm_nodes | swarm_node_availability(inventory_hostname, docker_swarm_node_availability) }}
+    {{ hostvars | swarm_node_ip(
+        docker_swarm__run_manager,
+        docker_swarm_nodes | swarm_node_iface(
+            docker_swarm__run_manager,
+            docker_swarm_node_iface))
+    }}:2377
+  when: >
+    inventory_hostname in groups[docker_swarm_group_managers] and
+    inventory_hostname in docker_swarm__nodes_membership_inactive and
+    inventory_hostname != docker_swarm__run_manager and
+    inventory_hostname not in docker_swarm__absent_nodes
+  tags:
+    - docker_swarm_join
+
+- name: Add new worker
+  shell: >
+    docker swarm join --token {{ docker_swarm__token_worker }}
+    --advertise-addr {{ docker_swarm_nodes | swarm_node_iface(inventory_hostname, docker_swarm_node_iface) }}
+    --availability {{ docker_swarm_nodes | swarm_node_availability(inventory_hostname, docker_swarm_node_availability) }}
+    {{ hostvars | swarm_node_ip(
+        docker_swarm__run_manager,
+        docker_swarm_nodes | swarm_node_iface(
+            docker_swarm__run_manager,
+            docker_swarm_node_iface))
+    }}:2377
+  when: >
+    inventory_hostname in groups[docker_swarm_group_workers] and
+    inventory_hostname in docker_swarm__nodes_membership_inactive and
+    inventory_hostname not in docker_swarm__absent_nodes
+  tags:
+    - docker_swarm_join
+
+- name: Get current node labels
+  shell: >
+    docker node inspect --format
+    '{% raw %}{{ range $k, $v := .Spec.Labels }}{{ $k }}={{ $v }}{{ "\n" }}{{ end }}{% endraw %}'
+    {{ item }}
+  register: docker_swarm_labels_result
+  when: >
+    inventory_hostname == docker_swarm__run_manager
+  loop: >
+    {{
+        groups[docker_swarm_group] |
+        difference(docker_swarm__absent_nodes)
+    }}
+  changed_when: false
+  tags:
+    - docker_swarm_labels
+
+- name: Set or remove node labels
+  shell: >
+    docker node update {{ item.node }} {{ item.command }}
+  when: >
+    inventory_hostname == docker_swarm__run_manager and
+    item.node not in docker_swarm__absent_nodes
+  loop: >
+    {{ hostvars | swarm_node_set_labels(inventory_hostname, docker_swarm_nodes, docker_swarm_node_labels) }}
+  tags:
+    - docker_swarm_labels
+
+- name: Promote node to be a manager
+  shell: docker node promote {{ item }}
+  when: >
+    inventory_hostname == docker_swarm__run_manager
+  loop: >
+    {{ hostvars | swarm_nodes_xmote(inventory_hostname, groups[docker_swarm_group_managers], false) }}
+  tags:
+    - docker_swarm_xmote
+    - docker_swarm_promote
+
+- name: Demote node to be a worker
+  shell: docker node demote {{ item }}
+  when: >
+    inventory_hostname == docker_swarm__run_manager
+  loop: >
+    {{ hostvars | swarm_nodes_xmote(inventory_hostname, groups[docker_swarm_group_workers], true) }}
+  tags:
+    - docker_swarm_xmote
+    - docker_swarm_demote
+
+- name: Get current node availability
+  shell: docker node ls --format '{% raw %}{{ .Hostname }}:{{ .Availability }}{% endraw %}'
+  register: docker_swarm__availability_result
+  when: >
+    inventory_hostname == docker_swarm__run_manager
+  changed_when: false
+  tags:
+    - docker_swarm_availability
+    - docker_swarm_remove
+
+- name: Set node availability
+  shell: docker node update --availability {{ item.availability }} {{ item.node }}
+  when: >
+    inventory_hostname == docker_swarm__run_manager
+  loop: >
+    {{ hostvars | swarm_nodes_availability(docker_swarm__availability_result, docker_swarm_nodes, docker_swarm_node_availability) }}
+  tags:
+    - docker_swarm_availability
+    - docker_swarm_remove
+
+- name: Demote manager nodes which are about to be removed from the cluster
+  shell: docker node demote {{ item }}
+  when: >
+    docker_swarm__nodes_membership_active | length > 1 and
+    inventory_hostname == docker_swarm__run_manager
+  loop: >
+    {{
+        docker_swarm__current_nodes |
+        intersect(docker_swarm__absent_nodes) |
+        intersect(groups[docker_swarm_group_managers])
+    }}
+  tags:
+    - docker_swarm_cleanup
+
+- name: Leave nodes from the cluster
+  shell: docker swarm leave
+  when: >
+    inventory_hostname in groups[docker_swarm_group] and
+    inventory_hostname in docker_swarm__current_nodes and
+    inventory_hostname in docker_swarm_nodes and
+    'state' in docker_swarm_nodes[inventory_hostname] and
+    docker_swarm_nodes[inventory_hostname]['state'] == 'absent'
+  tags:
+    - docker_swarm_cleanup
+
+- name: Remove nodes from the cluster
+  shell: docker node rm --force {{ item }}
+  when: >
+    docker_swarm__nodes_membership_active | length > 1 and
+    inventory_hostname == docker_swarm__run_manager
+  loop: >
+    {{
+        docker_swarm__current_nodes |
+        intersect(docker_swarm__absent_nodes)
+    }}
+  tags:
+    - docker_swarm_cleanup

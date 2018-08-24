@@ -1,0 +1,22 @@
+---
+
+# Group name for all nodes in the cluster (managers + workers)
+docker_swarm_group: swarm
+
+# Group name for manager nodes
+docker_swarm_group_managers: managers
+
+# Group name for worker nodes
+docker_swarm_group_workers: workers
+
+# Default node network interface through which the nodes in the cluster communicate
+docker_swarm_node_iface: eth0
+
+# Default node availability mode
+docker_swarm_node_availability: active
+
+# Default node labels
+docker_swarm_node_labels: {}
+
+# List of cluster nodes and their attributes (see examples in the README for details)
+docker_swarm_nodes: {}

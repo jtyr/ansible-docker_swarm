@@ -1,0 +1,20 @@
+---
+
+galaxy_info:
+  author: Jiri Tyr
+  description: Role which installs and configures Docker Swarm cluster
+  license: MIT
+  min_ansible_version: 2.6
+  platforms:
+    - name: EL
+      versions:
+        - all
+    - name: Ubuntu
+      versions:
+        - all
+    - name: Debian
+      versions:
+        - all
+  galaxy_tags:
+    - system
+dependencies: []
