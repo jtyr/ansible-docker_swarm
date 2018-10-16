@@ -103,7 +103,7 @@ The group names can be controled by setting the `docker_swarm_group*` variables.
 ```
 
 New node can be added into the cluster by simply adding it into the inventory.
-Node can be rebuild by destroing the node and running the role again on all
+Node can be rebuild by destroying the node and running the role again on all
 cluster.
 
 
