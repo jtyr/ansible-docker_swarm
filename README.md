@@ -25,7 +25,7 @@ Examples
 --------
 
 Role of the node (manager/worker) is controlled by presence of the nodes in the
-particular Ansible inventory group. The examples bellow assume the following
+particular Ansible inventory group. Examples bellow assume the following
 inventory:
 
 ```ini
@@ -104,7 +104,8 @@ The group names can be controled by setting the `docker_swarm_group*` variables.
 
 New node can be added into the cluster by simply adding it into the inventory.
 Node can be rebuild by destroying the node and running the role again on all
-cluster.
+cluster. Promote/demote node to master/worker is simply done by moving the
+node between the inventory groups. 
 
 
 Role variables
